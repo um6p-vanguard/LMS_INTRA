@@ -89,32 +89,53 @@ show_help() {
 
 # Initialize project
 init_project() {
-    print_header "Initializing LMS Project"
-    
+    print_header "Full Reset and Initialization of LMS Project"
+
+    print_warning "Stopping and removing all containers and volumes (all data will be lost)"
+    docker-compose down -v
+    print_success "Containers and volumes removed."
+
+    print_info "Removing all node_modules folders..."
+    find . -type d -name "node_modules" -exec rm -rf {} +
+    print_success "node_modules removed."
+
+    print_info "Cleaning all migration files..."
+    APPS=(accounts courses assessments grades quiz_integration timetable common weeks lessons)
+    for app in "${APPS[@]}"; do
+        migrations_dir="Astra-learn/$app/migrations"
+        if [ -d "$migrations_dir" ]; then
+            find "$migrations_dir" -maxdepth 1 -type f -name "*.py" ! -name "__init__.py" -exec rm -f {} + || true
+            rm -rf "$migrations_dir/__pycache__" || true
+        fi
+    done
+    print_success "Migration files cleaned."
+
+    print_info "Removing backend DB volume..."
+    docker volume rm lms_intra_astra_learn_backend_postgres_data || true
+    print_success "Backend DB volume removed."
+
     print_info "Building containers..."
     docker-compose build
-    
+
     print_info "Starting containers..."
     docker-compose up -d
-    
+
     print_info "Waiting for services to be ready..."
-    # wait for postgres container to be ready
     wait_for_db
 
-    # Remove any existing migration files so we start fresh, then create new migrations
-    clean_migrations_files
+    print_info "Creating new migrations..."
+    docker-compose exec astra-learn-back python manage.py makemigrations
 
-    print_info "Creating migrations (if needed)..."
-    docker exec -it astra-learn-back python manage.py makemigrations
+    print_info "Applying all migrations..."
+    docker-compose exec astra-learn-back python manage.py migrate
 
-    print_info "Running migrations..."
-    docker exec -it astra-learn-back python manage.py migrate
-    
-    print_info "Creating superuser..."
-    docker exec -it astra-learn-back python manage.py createsuperuser
-    
-    print_info "Setting up frontend (LMS_FRONT)..."
+    print_info "Seeding all demo data and creating superuser (single file)..."
+    sleep 2
+    docker-compose exec -T astra-learn-back python manage.py shell < Astra-learn/common/seed_all.py
+
+    print_info "Fixing frontend permissions and setting up..."
     FRONTEND_DIR="LMS_FRONT"
+    sudo chown -R $USER:$USER "$FRONTEND_DIR" 2>/dev/null || true
     (
         cd "$FRONTEND_DIR" || exit 1
         print_info "Running npm install (with legacy peer deps)..."
@@ -127,8 +148,8 @@ NEXT_PUBLIC_AUTH_API_URL=http://localhost:8001
 EOF
         print_success ".env file created in $FRONTEND_DIR/.env."
     )
-    
-    print_success "Project initialized successfully!"
+
+    print_success "Project fully reset and initialized!"
     print_info "Access the services at:"
     echo "  - Frontend: http://localhost:3000"
     echo "  - Backend API: http://localhost:8000"
@@ -179,6 +200,7 @@ PY
             print_success "Created $migrations_dir/__init__.py"
         fi
     done
+        APPS=(accounts courses assessments grades quiz_integration timetable common weeks lessons)
 }
 
 # Build containers
@@ -246,66 +268,8 @@ create_superuser() {
 
 # Seed all data
 seed_all() {
-    print_header "Seeding Database"
-    
-    print_info "Creating superuser (admin@um6p.ma)..."
-    docker exec -i astra-learn-back python manage.py shell << 'EOF'
-from django.contrib.auth import get_user_model
-User = get_user_model()
-
-if not User.objects.filter(username='admin').exists():
-    User.objects.create_superuser(
-        username='admin',
-        email='admin@um6p.ma',
-        password='Password123',
-        first_name='Admin',
-        last_name='User'
-    )
-    print('✓ Superuser created: admin@um6p.ma / Password123')
-else:
-    print('✓ Superuser already exists')
-EOF
-    
-    print_info "Creating user in GLOBAL-AUTH..."
-    docker exec -i fastapi-app curl -s -X POST http://localhost/users/ \
-        -H "Content-Type: application/json" \
-        -d '{
-            "email": "admin@um6p.ma",
-            "username": "admin",
-            "first_name": "Admin",
-            "last_name": "User",
-            "password": "Password123",
-            "role": "SuperUser"
-        }' > /tmp/globalauth_response.json 2>&1
-    
-    if grep -q '"id"' /tmp/globalauth_response.json 2>/dev/null; then
-        print_success "GLOBAL-AUTH user created: admin@um6p.ma / Password123"
-    elif grep -q -i "already" /tmp/globalauth_response.json 2>/dev/null; then
-        print_success "GLOBAL-AUTH user already exists"
-    else
-        print_warning "Could not verify GLOBAL-AUTH user creation"
-    fi
-    rm -f /tmp/globalauth_response.json
-    
-    print_info "Checking for seed commands..."
-    if docker exec astra-learn-back python manage.py help 2>&1 | grep -q "seed_demo_data"; then
-        print_info "Running seed_demo_data..."
-        docker exec astra-learn-back python manage.py seed_demo_data
-        print_success "Demo data seeded"
-    elif docker exec astra-learn-back python manage.py help 2>&1 | grep -q "seed_demo"; then
-        print_info "Running seed_demo..."
-        docker exec astra-learn-back python manage.py seed_demo
-        print_success "Demo data seeded"
-    else
-        print_warning "No seed_demo_data command found, skipping"
-    fi
-    
-    if docker exec astra-learn-back python manage.py help 2>&1 | grep -q "seed_micro"; then
-        print_info "Running seed_micro (ECON101 course)..."
-        docker exec astra-learn-back python manage.py seed_micro
-        print_success "Microeconomics course seeded"
-    fi
-    
+    print_header "Seeding Database (Unified)"
+    docker exec -i astra-learn-back python manage.py shell < Astra-learn/common/seed_all.py
     print_success "Database seeding completed!"
     echo ""
     print_info "Login credentials:"
@@ -328,7 +292,9 @@ db_shell() {
 db_summary() {
     print_header "Database Summary"
     docker exec -i astra-learn-back python manage.py shell << 'EOF'
-from courses.models import Course, Week, Lesson
+from courses.models import Course
+from weeks.models import Week
+from lessons.models import Lesson
 from accounts.models import User
 from assessments.models import Assignment, Submission
 from grades.models import Grade
@@ -350,8 +316,8 @@ print(f"📆 Events:       {Event.objects.count()}")
 print("\n📚 COURSES")
 print("-" * 60)
 for course in Course.objects.all():
-    weeks = course.weeks.count()
-    lessons = Lesson.objects.filter(week__course=course).count()
+    weeks = Week.objects.filter(course=course).count()
+    lessons = Lesson.objects.filter(course=course).count()
     enrollments = course.enrollments.count()
     print(f"{course.code}: {course.title}")
     print(f"  → {weeks} weeks, {lessons} lessons, {enrollments} enrollments")

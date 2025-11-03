@@ -32,19 +32,20 @@ If you already cloned without submodules:
 git submodule update --init --recursive
 ```
 
+
 ### 2. Initialize the Project
 
 Use the convenient Docker management script:
 
 ```bash
-# Build containers, run migrations, and seed all demo data
+# Full reset: removes containers, volumes, node_modules, migrations, and database, then rebuilds and seeds everything
 ./docker.sh init
 
 # Or step by step:
 ./docker.sh build       # Build all containers
 ./docker.sh up          # Start all services
 ./docker.sh migrate     # Run database migrations
-./docker.sh seed-all    # Create admin user + seed demo data
+./docker.sh seed-all    # Create admin user + seed demo data (single script)
 ```
 
 ### 3. Access the Application
@@ -79,9 +80,11 @@ All users have the same password for development: **`Password123`**
 | sam | sam@um6p.ma | Student | Invited to courses |
 | econ_instructor | econ@um6p.ma | Instructor | Created ECON101 |
 
+
 ## 📚 Seeded Demo Data
 
-After running `./docker.sh seed-all`, the database includes:
+All demo data and admin user creation is handled by a single script: `Astra-learn/common/seed_all.py`.
+After running `./docker.sh seed-all` or `./docker.sh init`, the database includes:
 
 ### Courses
 1. **DJ101: Intro to Django** (2 weeks, 4 lessons)
@@ -274,24 +277,33 @@ Run backend tests:
    ./docker.sh migrate
    ```
 
-### Adding New Demo Data
 
-Edit seed commands in:
-- `Astra-learn/common/management/commands/seed_demo_data.py`
-- `Astra-learn/common/management/commands/seed_micro.py`
+### Adding or Modifying Demo Data
+
+To add or change demo data, edit the unified seeding script:
+- `Astra-learn/common/seed_all.py`
 
 Then run:
 ```bash
 ./docker.sh seed-all
 ```
 
+
 ### Resetting Everything
 
-To start fresh:
+To start from a truly clean state (removes containers, volumes, node_modules, migrations, and database, then rebuilds and reseeds):
 ```bash
-./docker.sh clean          # Remove all containers and volumes
-./docker.sh init           # Rebuild and initialize
+./docker.sh init           # Full reset and initialize (recommended)
 ```
+Or, to just remove containers and volumes:
+```bash
+./docker.sh clean          # Remove all containers and volumes (data only)
+```
+## 📝 Notes
+
+- All demo data and admin user creation is now handled by a single file: `Astra-learn/common/seed_all.py`.
+- The `init` command is the recommended way to fully reset and reinitialize your development environment.
+- If you encounter issues or want a truly clean state, always use `./docker.sh init`.
 
 ## 🔧 Configuration
 
